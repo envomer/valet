@@ -30,7 +30,7 @@ class Brew
      */
     function installed($formula)
     {
-        return in_array($formula, explode(PHP_EOL, $this->cli->run('brew list | grep '.$formula)));
+        return in_array($formula, explode(PHP_EOL, $this->cli->runAsUser('brew list | grep '.$formula)));
     }
 
     /**
@@ -40,22 +40,54 @@ class Brew
      */
     function hasInstalledPhp()
     {
-        return $this->installed('php70')
-            || $this->installed('php56')
-            || $this->installed('php55');
+        return $this->supportedPhpVersions()->contains(function ($version) {
+            return $this->installed($version);
+        });
+    }
+
+    /**
+     * Get a list of supported PHP versions
+     *
+     * @return \Illuminate\Support\Collection
+     */
+    function supportedPhpVersions()
+    {
+        return collect(['php72', 'php71', 'php70', 'php56']);
+    }
+
+    /**
+     * Determine if a compatible nginx version is Homebrewed.
+     *
+     * @return bool
+     */
+    function hasInstalledNginx()
+    {
+        return $this->installed('nginx')
+            || $this->installed('nginx-full');
+    }
+
+    /**
+     * Return name of the nginx service installed via Homebrewed.
+     *
+     * @return string
+     */
+    function nginxServiceName()
+    {
+        return $this->installed('nginx-full') ? 'nginx-full' : 'nginx';
     }
 
     /**
      * Ensure that the given formula is installed.
      *
      * @param  string  $formula
+     * @param  array  $options
      * @param  array  $taps
      * @return void
      */
-    function ensureInstalled($formula, array $taps = [])
+    function ensureInstalled($formula, $options = [], $taps = [])
     {
         if (! $this->installed($formula)) {
-            $this->installOrFail($formula, $taps);
+            $this->installOrFail($formula, $options, $taps);
         }
     }
 
@@ -63,18 +95,21 @@ class Brew
      * Install the given formula and throw an exception on failure.
      *
      * @param  string  $formula
+     * @param  array  $options
      * @param  array  $taps
      * @return void
      */
-    function installOrFail($formula, array $taps = [])
+    function installOrFail($formula, $options = [], $taps = [])
     {
+        info("Installing {$formula}...");
+
         if (count($taps) > 0) {
             $this->tap($taps);
         }
 
         output('<info>['.$formula.'] is not installed, installing it now via Brew...</info> 🍻');
 
-        $this->cli->runAsUser('brew install '.$formula, function ($exitCode, $errorOutput) use ($formula) {
+        $this->cli->runAsUser(trim('brew install '.$formula.' '.implode(' ', $options)), function ($exitCode, $errorOutput) use ($formula) {
             output($errorOutput);
 
             throw new DomainException('Brew was unable to install ['.$formula.'].');
@@ -82,7 +117,7 @@ class Brew
     }
 
     /**
-     * Tag the given formulas.
+     * Tap the given formulas.
      *
      * @param  dynamic[string]  $formula
      * @return void
@@ -106,7 +141,12 @@ class Brew
         $services = is_array($services) ? $services : func_get_args();
 
         foreach ($services as $service) {
-            $this->cli->quietly('sudo brew services restart '.$service);
+            if ($this->installed($service)) {
+                info("Restarting {$service}...");
+
+                $this->cli->quietly('sudo brew services stop '.$service);
+                $this->cli->quietly('sudo brew services start '.$service);
+            }
         }
     }
 
@@ -120,7 +160,11 @@ class Brew
         $services = is_array($services) ? $services : func_get_args();
 
         foreach ($services as $service) {
-            $this->cli->quietly('sudo brew services stop '.$service);
+            if ($this->installed($service)) {
+                info("Stopping {$service}...");
+
+                $this->cli->quietly('sudo brew services stop '.$service);
+            }
         }
     }
 
@@ -137,15 +181,11 @@ class Brew
 
         $resolvedPath = $this->files->readLink('/usr/local/bin/php');
 
-        if (strpos($resolvedPath, 'php70') !== false) {
-            return 'php70';
-        } elseif (strpos($resolvedPath, 'php56') !== false) {
-            return 'php56';
-        } elseif (strpos($resolvedPath, 'php55') !== false) {
-            return 'php55';
-        } else {
+        return $this->supportedPhpVersions()->first(function ($version) use ($resolvedPath) {
+            return strpos($resolvedPath, $version) !== false;
+        }, function () {
             throw new DomainException("Unable to determine linked PHP.");
-        }
+        });
     }
 
     /**
@@ -156,18 +196,5 @@ class Brew
     function restartLinkedPhp()
     {
         $this->restartService($this->linkedPhp());
-    }
-
-    /**
-     * Create the "sudoers.d" entry for running Brew.
-     *
-     * @return void
-     */
-    function createSudoersEntry()
-    {
-        $this->files->ensureDirExists('/etc/sudoers.d');
-
-        $this->files->put('/etc/sudoers.d/brew', 'Cmnd_Alias BREW = /usr/local/bin/brew *
-%admin ALL=(root) NOPASSWD: BREW'.PHP_EOL);
     }
 }

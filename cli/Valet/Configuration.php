@@ -27,6 +27,8 @@ class Configuration
         $this->createDriversDirectory();
         $this->createSitesDirectory();
         $this->createExtensionsDirectory();
+        $this->createLogDirectory();
+        $this->createCertificatesDirectory();
         $this->writeBaseConfiguration();
 
         $this->files->chown($this->path(), user());
@@ -82,6 +84,28 @@ class Configuration
     }
 
     /**
+     * Create the directory for Nginx logs.
+     *
+     * @return void
+     */
+    function createLogDirectory()
+    {
+        $this->files->ensureDirExists(VALET_HOME_PATH.'/Log', user());
+
+        $this->files->touch(VALET_HOME_PATH.'/Log/nginx-error.log');
+    }
+
+    /**
+     * Create the directory for SSL certificates.
+     *
+     * @return void
+     */
+    function createCertificatesDirectory()
+    {
+        $this->files->ensureDirExists(VALET_HOME_PATH.'/Certificates', user());
+    }
+
+    /**
      * Write the base, initial configuration for Valet.
      */
     function writeBaseConfiguration()
@@ -119,7 +143,7 @@ class Configuration
     }
 
     /**
-     * Add the given path to the configuration.
+     * Remove the given path from the configuration.
      *
      * @param  string  $path
      * @return void
@@ -183,7 +207,7 @@ class Configuration
      * @param  array  $config
      * @return void
      */
-    function write(array $config)
+    function write($config)
     {
         $this->files->putAsUser($this->path(), json_encode(
             $config, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES

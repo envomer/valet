@@ -8,9 +8,9 @@ use Symfony\Component\Process\Process;
 
 class PhpFpm
 {
-    public $brew, $cli, $files;
+    var $brew, $cli, $files;
 
-    public $taps = [
+    var $taps = [
         'homebrew/dupes', 'homebrew/versions', 'homebrew/homebrew-php'
     ];
 
@@ -22,7 +22,7 @@ class PhpFpm
      * @param  Filesystem  $files
      * @return void
      */
-    public function __construct(Brew $brew, CommandLine $cli, Filesystem $files)
+    function __construct(Brew $brew, CommandLine $cli, Filesystem $files)
     {
         $this->cli = $cli;
         $this->brew = $brew;
@@ -34,12 +34,10 @@ class PhpFpm
      *
      * @return void
      */
-    public function install()
+    function install()
     {
-        if (! $this->brew->installed('php70') &&
-            ! $this->brew->installed('php56') &&
-            ! $this->brew->installed('php55')) {
-            $this->brew->ensureInstalled('php70', $this->taps);
+        if (! $this->brew->hasInstalledPhp()) {
+            $this->brew->ensureInstalled('php71', [], $this->taps);
         }
 
         $this->files->ensureDirExists('/usr/local/var/log', user());
@@ -50,18 +48,34 @@ class PhpFpm
     }
 
     /**
-     * Update the PHP FPM configuration to use the current user.
+     * Update the PHP FPM configuration.
      *
      * @return void
      */
-    public function updateConfiguration()
+    function updateConfiguration()
     {
+        info('Updating PHP configuration...');
+
         $contents = $this->files->get($this->fpmConfigPath());
 
         $contents = preg_replace('/^user = .+$/m', 'user = '.user(), $contents);
         $contents = preg_replace('/^group = .+$/m', 'group = staff', $contents);
+        $contents = preg_replace('/^listen = .+$/m', 'listen = '.VALET_HOME_PATH.'/valet.sock', $contents);
+        $contents = preg_replace('/^;?listen\.owner = .+$/m', 'listen.owner = '.user(), $contents);
+        $contents = preg_replace('/^;?listen\.group = .+$/m', 'listen.group = staff', $contents);
+        $contents = preg_replace('/^;?listen\.mode = .+$/m', 'listen.mode = 0777', $contents);
 
         $this->files->put($this->fpmConfigPath(), $contents);
+
+
+        $contents = $this->files->get(__DIR__.'/../stubs/php-memory-limits.ini');
+
+        $destFile = dirname($this->fpmConfigPath());
+        $destFile = str_replace('/php-fpm.d', '', $destFile);
+        $destFile .= '/conf.d/php-memory-limits.ini';
+        $this->files->ensureDirExists(dirname($destFile), user());
+
+        $this->files->putAsUser($destFile, $contents);
     }
 
     /**
@@ -69,10 +83,8 @@ class PhpFpm
      *
      * @return void
      */
-    public function restart()
+    function restart()
     {
-        $this->stop();
-
         $this->brew->restartLinkedPhp();
     }
 
@@ -81,9 +93,9 @@ class PhpFpm
      *
      * @return void
      */
-    public function stop()
+    function stop()
     {
-        $this->brew->stopService('php55', 'php56', 'php70');
+        $this->brew->stopService('php56', 'php70', 'php71', 'php72');
     }
 
     /**
@@ -91,16 +103,15 @@ class PhpFpm
      *
      * @return string
      */
-    public function fpmConfigPath()
+    function fpmConfigPath()
     {
-        if ($this->brew->linkedPhp() === 'php70') {
-            return '/usr/local/etc/php/7.0/php-fpm.d/www.conf';
-        } elseif ($this->brew->linkedPhp() === 'php56') {
-            return '/usr/local/etc/php/5.6/php-fpm.conf';
-        } elseif ($this->brew->linkedPhp() === 'php55') {
-            return '/usr/local/etc/php/5.5/php-fpm.conf';
-        } else {
-            throw new DomainException('Unable to find php-fpm config.');
-        }
+        $confLookup = [
+            'php72' => '/usr/local/etc/php/7.2/php-fpm.d/www.conf',
+            'php71' => '/usr/local/etc/php/7.1/php-fpm.d/www.conf',
+            'php70' => '/usr/local/etc/php/7.0/php-fpm.d/www.conf',
+            'php56' => '/usr/local/etc/php/5.6/php-fpm.conf',
+        ];
+
+        return $confLookup[$this->brew->linkedPhp()];
     }
 }
